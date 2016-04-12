@@ -50,7 +50,7 @@ func Push(q Interface, payload []byte) error {
 	conn := RedisPool.Get()
 	defer conn.Close()
 	_, err = conn.Do("LPUSH", redisQueueKey(q), marshaled)
-	go ensureWorkerIsRunning(q)
+	go EnsureWorkerIsRunning(q)
 	return err
 }
 
@@ -63,13 +63,13 @@ func PushIfEmpty(q Interface, payload []byte) error {
 	if queueLength == 0 {
 		Push(q, payload)
 	} else {
-		ensureWorkerIsRunning(q)
+		EnsureWorkerIsRunning(q)
 	}
 	return nil
 }
 
-// ensureWorkerIsRunning runs as a worker if none runs, but returns immediately if one already runs. It is recommended to run this in a goroutine.
-func ensureWorkerIsRunning(q Interface) {
+// EnsureWorkerIsRunning runs as a worker if none runs, but returns immediately if one already runs. It is recommended to run this in a goroutine.
+func EnsureWorkerIsRunning(q Interface) {
 	logger := log.WithField("worker", q.QueueID())
 	ret, err := redis.String(safeDo("SET", redisLockKey(q), 1, "NX"))
 	if err != nil || ret != "OK" {
