@@ -2,8 +2,13 @@ package singletonqueue
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+)
+
+const (
+	testPrefix = "test-ordered-process"
 )
 
 type incQueueImpl struct {
@@ -11,16 +16,29 @@ type incQueueImpl struct {
 	t         *testing.T
 }
 
-func (q *incQueueImpl) GetID() string {
-	return "test-ordered-process"
+type testMessage struct {
+	Value int
 }
-func (q *incQueueImpl) Process(message Message) error {
-	var value int
-	json.Unmarshal(message.Payload, &value)
-	if value != q.lastValue+1 {
-		q.t.Error("Expected:", q.lastValue+1, "got:", value)
+
+func (q *incQueueImpl) New(queueID string) Interface {
+	if strings.HasPrefix(queueID, testPrefix) {
+		newQ := incQueueImpl{-1, q.t}
+		return &newQ
 	}
-	q.lastValue = value
+	return nil
+}
+
+func (q *incQueueImpl) QueueID() string {
+	return testPrefix
+}
+
+func (q *incQueueImpl) Process(message Message) error {
+	var msg testMessage
+	json.Unmarshal(message.Payload, &msg)
+	if msg.Value != q.lastValue+1 {
+		q.t.Error("Expected:", q.lastValue+1, "got:", msg.Value)
+	}
+	q.lastValue = msg.Value
 	return nil
 }
 
@@ -28,7 +46,9 @@ func TestOrderedProcess(t *testing.T) {
 	incQueue := incQueueImpl{-1, t}
 
 	for i := 0; i < 10; i++ {
-		marshaled, _ := json.Marshal(i)
+		marshaled, _ := json.Marshal(testMessage{
+			Value: i,
+		})
 		Push(&incQueue, marshaled)
 	}
 
