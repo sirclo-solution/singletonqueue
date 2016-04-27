@@ -6,6 +6,10 @@ import (
 	"github.com/garyburd/redigo/redis"
 	log "gopkg.in/Sirupsen/logrus.v0"
 	"gopkg.in/vmihailenco/msgpack.v2"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 )
 
 // RedisPool is the reference to the pool used to draw connections from. Set this before calling any functions in this package.
@@ -15,6 +19,7 @@ var RedisPool *redis.Pool
 type Interface interface {
 	QueueID() string               // Unique ID
 	Process(message Message) error // The function that will process messages
+	New(queueID string) Interface  // When trying to reinitialize interface given a queueID
 }
 
 // Message is passed to Queue.WorkerFunc.
@@ -81,11 +86,34 @@ func EnsureWorkerIsRunning(q Interface) {
 	defer logger.Info("Worker has terminated")
 	defer safeDo("DEL", redisLockKey(q))
 
+	quit := make(chan struct{})
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt)
+	signal.Notify(sigs, syscall.SIGTERM)
+	quitting := false
+
+	go func() {
+		for {
+			select {
+			case <-sigs:
+				quitting = true
+				return
+			case <-quit:
+				quitting = true
+				return
+			}
+		}
+	}()
+
 	for {
+		if quitting {
+			return
+		}
 		ret, err := redis.Bytes(safeDo("RPOP", redisQueueKey(q)))
 		//log.Info("ret:", ret, " err:", err)
 		if err != nil && len(ret) == 0 {
 			logger.Debug("No more jobs in the queue, exiting.")
+			close(quit)
 			return // no more jobs in the queue
 		}
 		var message Message
@@ -110,4 +138,17 @@ func safeDo(commandName string, args ...interface{}) (interface{}, error) {
 	conn := RedisPool.Get()
 	defer conn.Close()
 	return conn.Do(commandName, args...)
+}
+
+func Respawn(prefix string, queue Interface) {
+	log.Info(prefix)
+	ret, _ := redis.Strings(safeDo("KEYS", "sq:q:"+prefix+"*"))
+
+	for _, key := range ret {
+		queueID := strings.TrimPrefix(key, "sq:q:")
+		newQueue := queue.New(queueID)
+		if newQueue != nil {
+			go EnsureWorkerIsRunning(newQueue)
+		}
+	}
 }
