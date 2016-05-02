@@ -107,6 +107,8 @@ func EnsureWorkerIsRunning(q Interface) {
 
 	for {
 		if quitting {
+			signal.Stop(sigs)
+			close(sigs)
 			return
 		}
 		ret, err := redis.Bytes(safeDo("RPOP", redisQueueKey(q)))
